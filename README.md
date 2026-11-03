@@ -11,11 +11,10 @@ out. You can then paste or attach the result when answering a student's email.
 
 ## Getting started
 
-1. Download `DAFT.html`.
-2. Double-click it to open it in any modern browser (Chrome, Edge, Firefox, or Safari).
+**Use it online:** https://benschelske.com/DAFT/
 
-There's nothing to install and no internet connection needed. Everything runs
-in that one file.
+**Or offline:** download `index.html` (you can rename it, e.g. to `DAFT.html`) and
+double-click it to open it in any modern browser. No install or internet connection is needed.
 
 ## How to use it
 
