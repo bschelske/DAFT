@@ -5,6 +5,8 @@ DAFT is a small offline tool for writing neat dimensional-analysis
 
 > 10.0 g H₂ × (1 mol H₂ / 2.016 g H₂) × (2 mol H₂O / 2 mol H₂) × (18.02 g H₂O / 1 mol H₂O) = 89.4 g H₂O
 
+![Example of DAFT output](example.png)
+
 Type the factors in, and DAFT draws them in either the **railroad** ("train
 track") layout or as **fractions separated by ×**, with cancelled units crossed
 out. You can then paste or attach the result when answering a student's email.
