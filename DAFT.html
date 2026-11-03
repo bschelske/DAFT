@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dimensional Analysis Format Tool (DAFT)</title>
+<style>
+body { font-family: Arial, Helvetica, sans-serif; color: #000; background: #fff; margin: 20px; }
+input, textarea, select, button { font-size: 16px; color: #000; font-family: inherit; }
+input[type=text], textarea { border: 1px solid #999; background: #fff; padding: 4px; }
+button { background: #eee; border: 1px solid #999; padding: 4px 10px; cursor: pointer; }
+.factor { display: inline-block; vertical-align: top; border: 1px solid #ccc; background: #f4f4f4; padding: 6px; margin: 4px 4px 4px 0; }
+.factor input { width: 150px; display: block; }
+.factor hr { border: 0; border-top: 2px solid #000; margin: 4px 0; }
+.factor .btns { margin-top: 4px; }
+.factor .btns button { padding: 2px 8px; }
+#out { border: 1px solid #ccc; background: #fff; max-width: 100%; height: auto; }
+p, label { margin: 8px 0; }
+code { background: #eee; padding: 0 3px; }
+@media print {
+  .noprint { display: none !important; }
+  body { margin: 0; }
+  #out { border: none; }
+}
+</style>
+</head>
+<body>
+<!-- Vibecoded using Claude Opus 5.5 ¯\_(ツ)_/¯ -->
+<div class="noprint">
+  <h2>Dimensional Analysis Format Tool (DAFT)</h2>
+
+  <p><label>Problem / heading (optional, shown above the work):<br>
+    <textarea id="title" rows="2" cols="70"></textarea></label></p>
+
+  <p><b>Factors</b> (top and bottom of each column):</p>
+  <div id="factors"></div>
+  <p><button id="add">+ Add factor</button></p>
+
+  <p><label>Answer (shown after "="): <input type="text" id="answer" size="25"></label></p>
+
+  <p><label>Note (optional, shown below the work):<br>
+    <textarea id="note" rows="2" cols="70"></textarea></label></p>
+
+  <p>
+    <label>Style
+      <select id="style">
+        <option value="railroad">Railroad (vertical lines)</option>
+        <option value="fractions">Fractions with ×</option>
+      </select></label>
+    &nbsp;
+    <label>Size
+      <select id="size">
+        <option value="20">Small</option>
+        <option value="28">Medium</option>
+        <option value="36">Large</option>
+      </select></label>
+    &nbsp;
+    <label>Font
+      <select id="font">
+        <option value="serif">Times</option>
+        <option value="georgia">Georgia</option>
+        <option value="sans">Arial</option>
+      </select></label>
+  </p>
+
+  <p>
+    <b>Typing tips:</b>
+    <code>H_2O</code> → subscript 2 &nbsp;|&nbsp;
+    <code>10^{23}</code> or <code>Cl^-</code> → superscript &nbsp;|&nbsp;
+    <code>~g H_2~</code> → crossed-out (cancelled) unit &nbsp;|&nbsp;
+    <code>*</code> → × &nbsp;|&nbsp;
+    <code>\*</code> → a literal *
+  </p>
+
+  <p>
+    <button id="png">Download PNG</button>
+    <button id="copy">Copy image</button>
+    <button id="print">Print / Save as PDF</button>
+    &nbsp;&nbsp;
+    <button id="example">Load example</button>
+    <button id="clear">Clear</button>
+    <span id="msg"></span>
+  </p>
+  <p><b>Preview:</b></p>
+</div>
+
+<canvas id="out"></canvas>
+
+<script>
+const $ = id => document.getElementById(id);
+const SCALE = 2; // render at 2x for crisp images
+const FONTS = {
+  serif: '"Times New Roman", Times, serif',
+  georgia: 'Georgia, "Times New Roman", serif',
+  sans: 'Arial, Helvetica, sans-serif'
+};
+const BLANK = { title: '', factors: [{n: '', d: ''}, {n: '', d: ''}], answer: '', note: '', size: '28', font: 'serif', style: 'railroad' };
+const EXAMPLE = {
+  title: 'How many grams of water form from 10.0 g of H_2?   2H_2 + O_2 → 2H_2O',
+  factors: [
+    { n: '10.0 ~g H_2~', d: '' },
+    { n: '1 ~mol H_2~', d: '2.016 ~g H_2~' },
+    { n: '2 ~mol H_2O~', d: '2 ~mol H_2~' },
+    { n: '18.02 g H_2O', d: '1 ~mol H_2O~' }
+  ],
+  answer: '89.4 g H_2O',
+  note: '',
+  size: '28',
+  font: 'serif',
+  style: 'railroad'
+};
+const clone = o => JSON.parse(JSON.stringify(o));
+
+let state = null;
+try { state = JSON.parse(localStorage.getItem('railroad-state')); } catch (e) {}
+if (!state || !Array.isArray(state.factors)) state = clone(EXAMPLE);
+if (!state.style) state.style = 'railroad';
+
+function save() {
+  try { localStorage.setItem('railroad-state', JSON.stringify(state)); } catch (e) {}
+}
+
+/* ---------- rich text parsing ---------- */
+function parse(s) {
+  const runs = [];
+  let strike = false, buf = '', i = 0;
+  const push = (text, mode) => { if (text) runs.push({ text, mode, strike }); };
+  while (i < s.length) {
+    const c = s[i];
+    if (c === '\\' && i + 1 < s.length) { buf += s[i + 1]; i += 2; continue; }
+    if (c === '~') { push(buf, 'n'); buf = ''; strike = !strike; i++; continue; }
+    if ((c === '_' || c === '^') && i + 1 < s.length) {
+      push(buf, 'n'); buf = '';
+      const mode = c === '_' ? 'sub' : 'sup';
+      let t;
+      if (s[i + 1] === '{') {
+        const j = s.indexOf('}', i + 2);
+        if (j < 0) { t = s.slice(i + 2); i = s.length; }
+        else { t = s.slice(i + 2, j); i = j + 1; }
+      } else { t = s[i + 1]; i += 2; }
+      push(t.replace(/\*/g, '×'), mode);
+      continue;
+    }
+    buf += c === '*' ? '×' : c;
+    i++;
+  }
+  push(buf, 'n');
+  return runs;
+}
+
+function runFont(run, S, F) {
+  return (run.mode === 'n' ? S : S * 0.68) + 'px ' + F;
+}
+
+function measure(ctx, runs, S, F) {
+  let w = 0;
+  for (const r of runs) { ctx.font = runFont(r, S, F); w += ctx.measureText(r.text).width; }
+  return w;
+}
+
+function drawRuns(ctx, runs, x, y, S, F) {
+  let strikeStart = null;
+  const strikes = [];
+  for (const r of runs) {
+    if (r.strike && strikeStart === null) strikeStart = x;
+    if (!r.strike && strikeStart !== null) { strikes.push([strikeStart, x]); strikeStart = null; }
+    ctx.font = runFont(r, S, F);
+    const dy = r.mode === 'sub' ? S * 0.22 : r.mode === 'sup' ? -S * 0.42 : 0;
+    ctx.fillText(r.text, x, y + dy);
+    x += ctx.measureText(r.text).width;
+  }
+  if (strikeStart !== null) strikes.push([strikeStart, x]);
+  ctx.save();
+  ctx.strokeStyle = '#444';
+  ctx.lineWidth = Math.max(1.2, S / 18);
+  for (const [a, b] of strikes) {
+    ctx.beginPath();
+    ctx.moveTo(a - 1, y + S * 0.15);
+    ctx.lineTo(b + 1, y - S * 0.75);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/* ---------- rendering ---------- */
+function render() {
+  const S = +state.size || 28;
+  const F = FONTS[state.font] || FONTS.serif;
+  const cv = $('out'), ctx = cv.getContext('2d');
+
+  const m = S * 0.8, pad = S * 0.55, rowH = S * 1.55, gap = S * 0.5;
+  const tS = S * 0.8, tLH = tS * 1.45;
+
+  const titleLines = state.title.trim() ? state.title.split('\n').map(parse) : [];
+  const noteLines = state.note.trim() ? state.note.split('\n').map(parse) : [];
+  const cols = state.factors.map(f => {
+    const n = parse(f.n), d = parse(f.d);
+    return { n, d, w: Math.max(S * 1.5, measure(ctx, n, S, F), measure(ctx, d, S, F)) + 2 * pad };
+  });
+  const frac = state.style === 'fractions';
+  const timesRun = [{ text: '×', mode: 'n', strike: false }];
+  const timesW = frac ? measure(ctx, timesRun, S, F) + 2 * gap : 0;
+  const W = cols.reduce((a, c) => a + c.w, 0) + timesW * Math.max(0, cols.length - 1);
+
+  const ans = state.answer.trim() ? [{ text: '= ', mode: 'n', strike: false }, ...parse(state.answer)] : null;
+  const ansW = ans ? gap + measure(ctx, ans, S, F) : 0;
+
+  const lineW = lines => lines.reduce((a, l) => Math.max(a, measure(ctx, l, tS, F)), 0);
+  const titleH = titleLines.length ? titleLines.length * tLH + S * 0.5 : 0;
+  const noteH = noteLines.length ? S * 0.5 + noteLines.length * tLH : 0;
+
+  const cssW = 2 * m + Math.max(W + ansW, lineW(titleLines), lineW(noteLines), S * 4);
+  const cssH = 2 * m + titleH + 2 * rowH + noteH;
+
+  cv.width = Math.ceil(cssW * SCALE);
+  cv.height = Math.ceil(cssH * SCALE);
+  cv.style.width = Math.ceil(cssW) + 'px';
+  ctx.setTransform(SCALE, 0, 0, SCALE, 0, 0);
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, cssW, cssH);
+  ctx.fillStyle = '#000';
+  ctx.strokeStyle = '#000';
+  ctx.textBaseline = 'alphabetic';
+
+  let y = m;
+  for (const l of titleLines) { drawRuns(ctx, l, m, y + tS * 0.95, tS, F); y += tLH; }
+  if (titleLines.length) y += S * 0.5;
+
+  const top = y;
+  const mid = top + rowH;
+
+  ctx.lineWidth = Math.max(1.5, S / 16);
+
+  if (frac) {
+    // separate fractions with × between them
+    let x = m;
+    cols.forEach((c, i) => {
+      const nw = measure(ctx, c.n, S, F), dw = measure(ctx, c.d, S, F);
+      if (c.d.length) {
+        drawRuns(ctx, c.n, x + (c.w - nw) / 2, top + rowH * 0.68, S, F);
+        drawRuns(ctx, c.d, x + (c.w - dw) / 2, mid + rowH * 0.68, S, F);
+        const barW = Math.max(nw, dw) + pad * 0.8;
+        ctx.beginPath();
+        ctx.moveTo(x + (c.w - barW) / 2, mid);
+        ctx.lineTo(x + (c.w + barW) / 2, mid);
+        ctx.stroke();
+      } else {
+        // no denominator (e.g. the starting amount): center on the middle line
+        drawRuns(ctx, c.n, x + (c.w - nw) / 2, mid + S * 0.33, S, F);
+      }
+      x += c.w;
+      if (i < cols.length - 1) {
+        drawRuns(ctx, timesRun, x + gap, mid + S * 0.33, S, F);
+        x += timesW;
+      }
+    });
+  } else {
+    // railroad: text in cells
+    let x = m;
+    for (const c of cols) {
+      const nw = measure(ctx, c.n, S, F), dw = measure(ctx, c.d, S, F);
+      drawRuns(ctx, c.n, x + (c.w - nw) / 2, top + rowH * 0.68, S, F);
+      drawRuns(ctx, c.d, x + (c.w - dw) / 2, mid + rowH * 0.68, S, F);
+      x += c.w;
+    }
+
+    // track lines
+    ctx.beginPath();
+    ctx.moveTo(m, mid);
+    ctx.lineTo(m + W, mid);
+    x = m;
+    for (let i = 0; i < cols.length - 1; i++) {
+      x += cols[i].w;
+      ctx.moveTo(x, top + S * 0.1);
+      ctx.lineTo(x, top + 2 * rowH - S * 0.1);
+    }
+    ctx.stroke();
+  }
+
+  if (ans) drawRuns(ctx, ans, m + W + gap, mid + S * 0.33, S, F);
+
+  y = top + 2 * rowH;
+  if (noteLines.length) {
+    y += S * 0.5;
+    for (const l of noteLines) { drawRuns(ctx, l, m, y + tS * 0.95, tS, F); y += tLH; }
+  }
+}
+
+function update() { save(); render(); }
+
+/* ---------- editor ---------- */
+function buildFactors() {
+  const box = $('factors');
+  box.innerHTML = '';
+  state.factors.forEach((f, i) => {
+    const div = document.createElement('div');
+    div.className = 'factor';
+    div.innerHTML =
+      '<input type="text" data-k="n" placeholder="top">' +
+      '<hr>' +
+      '<input type="text" data-k="d" placeholder="bottom">' +
+      '<div class="btns">' +
+      '<button data-a="left" title="Move left">←</button> ' +
+      '<button data-a="right" title="Move right">→</button> ' +
+      '<button data-a="del" title="Remove">✕</button></div>';
+    div.querySelectorAll('input').forEach(inp => {
+      inp.value = f[inp.dataset.k];
+      inp.oninput = () => { f[inp.dataset.k] = inp.value; update(); };
+    });
+    div.querySelectorAll('button').forEach(b => b.onclick = () => {
+      const a = b.dataset.a, F = state.factors;
+      if (a === 'del') F.splice(i, 1);
+      if (a === 'left' && i > 0) [F[i - 1], F[i]] = [F[i], F[i - 1]];
+      if (a === 'right' && i < F.length - 1) [F[i + 1], F[i]] = [F[i], F[i + 1]];
+      buildFactors(); update();
+    });
+    box.appendChild(div);
+  });
+}
+
+function loadUI() {
+  $('title').value = state.title;
+  $('answer').value = state.answer;
+  $('note').value = state.note;
+  $('size').value = state.size;
+  $('font').value = state.font;
+  $('style').value = state.style;
+  buildFactors();
+  update();
+}
+
+['title', 'answer', 'note', 'size', 'font', 'style'].forEach(id => {
+  $(id).oninput = $(id).onchange = () => { state[id] = $(id).value; update(); };
+});
+
+$('add').onclick = () => {
+  state.factors.push({ n: '', d: '' });
+  buildFactors(); update();
+  const inputs = $('factors').querySelectorAll('input');
+  inputs[inputs.length - 2].focus();
+};
+$('example').onclick = () => { const st = state.style; state = clone(EXAMPLE); state.style = st; loadUI(); };
+$('clear').onclick = () => {
+  if (confirm('Clear everything?')) { state = clone(BLANK); state.size = $('size').value; state.font = $('font').value; state.style = $('style').value; loadUI(); }
+};
+
+function getBlob() { return new Promise(r => $('out').toBlob(r, 'image/png')); }
+function flash(t) { $('msg').textContent = t; setTimeout(() => { $('msg').textContent = ''; }, 4000); }
+
+$('png').onclick = async () => {
+  const blob = await getBlob();
+  const a = document.createElement('a');
+  const d = new Date();
+  const stamp = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') +
+    '_' + String(d.getHours()).padStart(2, '0') + String(d.getMinutes()).padStart(2, '0');
+  a.download = 'railroad-' + stamp + '.png';
+  a.href = URL.createObjectURL(blob);
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+};
+
+$('copy').onclick = async () => {
+  try {
+    const blob = await getBlob();
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+    flash('Copied — paste it into your email.');
+  } catch (e) {
+    flash('This browser blocked copying; use Download PNG instead.');
+  }
+};
+
+$('print').onclick = () => window.print();
+
+loadUI();
+</script>
+</body>
+</html>
